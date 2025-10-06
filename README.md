@@ -48,7 +48,7 @@ pip install pycryptodome
 
 Run the application:
 ```bash
-python secure_message_vault.py
+python SecureMessageVault.py
 ```
 
 ### Creating a New User
