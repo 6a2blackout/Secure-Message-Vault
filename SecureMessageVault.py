@@ -1,8 +1,14 @@
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
 from hashlib import sha256, md5
-import json, base64
+import json
+import base64
+import os
 
+app = Flask(__name__, static_folder='static')
+CORS(app)
 
 def pad(data):
     paddingLength = 16 - (len(data) % 16)
@@ -12,112 +18,102 @@ def unpad(data):
     paddingLength = ord(data[-1])
     return data[:-paddingLength]
 
+@app.route('/')
+def index():
+    return send_from_directory('static', 'index.html')
 
-
-print("Welcome!!")
-
-command = 0
-
-while command != 3:
-    print("1.\tCreate a New User\n2.\tLogin to an Existing User\n3.\tExit\n")
+@app.route('/api/create-user', methods=['POST'])
+def create_user():
     try:
-        command = int(input("\nEnter Command:\t"))
-        if command == 1:
-            newUserName = input("Enter Name:\t")
-            newPassword = input("Enter Password:\t")
-            newMessage = input("Enter a Message to Encrypt:\t")
+        data = request.json
+        username = data.get('username')
+        password = data.get('password')
+        message = data.get('message')
+        hash_choice = data.get('hashChoice')  # 'sha256' or 'md5'
+        
+        if hash_choice == 'sha256':
+            key = sha256(password.encode()).digest()
+            IV = get_random_bytes(16)
+            encryption = AES.new(key, AES.MODE_CBC, IV)
+            encryptedMessage = encryption.encrypt(pad(message).encode())
+            hashValue = sha256(encryptedMessage).hexdigest()
+            hashAlgo = "SHA-256"
+        else:  # md5
+            key = md5(password.encode()).digest()
+            IV = get_random_bytes(16)
+            encryption = AES.new(key, AES.MODE_CBC, IV)
+            encryptedMessage = encryption.encrypt(pad(message).encode())
+            hashValue = md5(encryptedMessage).hexdigest()
+            hashAlgo = "MD5"
+        
+        user = {
+            "Username": username,
+            "HashAlgo": hashAlgo,
+            "IV": base64.b64encode(IV).decode(),
+            "encryptedMessage": base64.b64encode(encryptedMessage).decode(),
+            "hashValue": hashValue
+        }
+        
+        with open("Users.json", "a") as file:
+            file.write(json.dumps(user) + "\n\n\n")
+        
+        return jsonify({"success": True, "message": "User created and message encrypted successfully!"})
+    
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 400
 
+@app.route('/api/login', methods=['POST'])
+def login():
+    try:
+        data = request.json
+        username = data.get('username')
+        password = data.get('password')
+        
+        if not os.path.exists("Users.json"):
+            return jsonify({"success": False, "message": "No users found"}), 404
+        
+        with open("Users.json", "r") as file:
+            for line in file:
+                if not line.strip():
+                    continue
+                try:
+                    user = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                
+                if user["Username"] == username:
+                    if user["HashAlgo"] == "SHA-256":
+                        key = sha256(password.encode()).digest()
+                        IV = base64.b64decode(user["IV"])
+                        encryptedMessage = base64.b64decode(user["encryptedMessage"])
+                        hashValue = user["hashValue"]
+                        
+                        testHash = sha256(encryptedMessage).hexdigest()
+                        if testHash != hashValue:
+                            return jsonify({"success": False, "message": "Integrity check failed!"})
+                        
+                        encryption = AES.new(key, AES.MODE_CBC, IV)
+                        message = unpad(encryption.decrypt(encryptedMessage).decode())
+                        return jsonify({"success": True, "message": message})
+                    
+                    elif user["HashAlgo"] == "MD5":
+                        key = md5(password.encode()).digest()
+                        IV = base64.b64decode(user["IV"])
+                        encryptedMessage = base64.b64decode(user["encryptedMessage"])
+                        hashValue = user["hashValue"]
+                        
+                        testHash = md5(encryptedMessage).hexdigest()
+                        if testHash != hashValue:
+                            return jsonify({"success": False, "message": "Integrity check failed!"})
+                        
+                        encryption = AES.new(key, AES.MODE_CBC, IV)
+                        message = unpad(encryption.decrypt(encryptedMessage).decode())
+                        return jsonify({"success": True, "message": message})
+        
+        return jsonify({"success": False, "message": "Username not found"}), 404
+    
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 400
 
-            
-
-            choice = 0
-            while choice == 0:
-                choice = int(input("Choose:\n1.\tSHA-256\n2.\tMD5\nChoice:\t"))
-                if choice == 1:
-                    key = sha256(newPassword.encode()).digest()
-                    IV = get_random_bytes(16)
-                    encryption = AES.new(key, AES.MODE_CBC, IV)
-                    encryptedMessage = encryption.encrypt(pad(newMessage).encode())
-                    hashValue = sha256(encryptedMessage).hexdigest()
-                    hashAlgo = "SHA-256"
-                elif choice == 2:
-                    key = md5(newPassword.encode()).digest()
-                    IV = get_random_bytes(16)
-                    encryption = AES.new(key, AES.MODE_CBC, IV)
-                    encryptedMessage = encryption.encrypt(pad(newMessage).encode())
-                    hashValue = md5(encryptedMessage).hexdigest()
-                    hashAlgo = "MD5"
-                else:
-                    print("Try Again")
-
-
-            User = {
-                "Username": newUserName, "HashAlgo": hashAlgo, "IV": base64.b64encode(IV).decode(), "encryptedMessage": base64.b64encode(encryptedMessage).decode(), "hashValue": hashValue,
-                #"hashAlgorithm": "SHA256"
-            }
-
-            with open("Users.json", "a") as file:
-                file.write(json.dumps(User) + "\n\n\n")
-
-            print("User Created and Message Encrypted Successfully\n\n")
-        elif command == 2:
-            userName = input("Enter Username:\t")
-            password = input("Enter Password:\t")
-
-            access = False
-            with open("Users.json", "r") as file:
-                for line in file:
-                    if not line.strip():
-                        continue
-                    try:
-                        User = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-
-                    if User["Username"] == userName:
-                        access = True
-                        if User["HashAlgo"] == "SHA-256":
-
-                            key = sha256(password.encode()).digest()
-
-                            IV = base64.b64decode(User["IV"])
-                            encryptedMessage = base64.b64decode(User["encryptedMessage"])
-                            hashValue = User["hashValue"]
-
-                            testHash = sha256(encryptedMessage).hexdigest()
-                            if testHash != hashValue:
-                                print("Integrity Check failed\n\n")
-                            else:
-                                encryption = AES.new(key, AES.MODE_CBC, IV)
-                                message = unpad(encryption.decrypt(encryptedMessage).decode())
-                                print(f"Decryption Successfull!!\n\nMessage:\t{message}")
-                                break
-                        elif User["HashAlgo"] == "MD5":
-
-                            key = md5(password.encode()).digest()
-
-                            IV = base64.b64decode(User["IV"])
-                            encryptedMessage = base64.b64decode(User["encryptedMessage"])
-                            hashValue = User["hashValue"]
-
-                            testHash = md5(encryptedMessage).hexdigest()
-                            if testHash != hashValue:
-                                print("Integrity Check failed\n\n")
-                            else:
-                                encryption = AES.new(key, AES.MODE_CBC, IV)
-                                message = unpad(encryption.decrypt(encryptedMessage).decode())
-                                print(f"Decryption Successfull!!\nMessage:\t{message}")
-                                break
-                        else:
-                            print("EEERRROOORRR")
-            if access == False:
-                print("Username not found:(")
-
-        elif command == 3:
-            print("Exiting...")
-            continue
-        else:
-            print("Choose either 1, 2, or 3\n")
-            print("1.\tCreate a New User\n2.\tLogin to an Existing User\n3.\tExit\n")
-    except:
-        print("")
+if __name__ == '__main__':
+    app.run(debug=True, port=5000)
